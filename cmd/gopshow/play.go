@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/goplus/present/playground/socket"
+	"github.com/goplus/show/playground/socket"
 
 	"golang.org/x/tools/godoc/static"
 	"golang.org/x/tools/present"
