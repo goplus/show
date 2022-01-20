@@ -1,4 +1,4 @@
-module github.com/goplus/present
+module github.com/goplus/show
 
 go 1.17
 
