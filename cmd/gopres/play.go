@@ -11,12 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"runtime"
 	"time"
 
-	"github.com/goplus/present"
+	"github.com/goplus/present/socket"
 	"golang.org/x/tools/godoc/static"
-	"golang.org/x/tools/playground/socket"
+	"golang.org/x/tools/present"
 
 	// This will register a handler at /compile that will proxy to the
 	// respective endpoints at play.golang.org. This allows the frontend to call
@@ -66,12 +65,12 @@ func initPlayground(basepath string, origin *url.URL) {
 		// When specifying nativeClient, non-Go code cannot be executed
 		// because the NaCl setup doesn't support doing so.
 		socket.RunScripts = false
-		socket.Environ = func() []string {
-			if runtime.GOARCH == "amd64" {
-				return environ("GOOS=nacl", "GOARCH=amd64p32")
-			}
-			return environ("GOOS=nacl")
-		}
+		// socket.Environ = func() []string {
+		// 	if runtime.GOARCH == "amd64" {
+		// 		return environ("GOOS=nacl", "GOARCH=amd64p32", "GOEXPERIMENT=noregabi")
+		// 	}
+		// 	return environ("GOOS=nacl")
+		// }
 	}
 	playScript(basepath, "SocketTransport")
 	http.Handle("/socket", socket.NewHandler(origin))
