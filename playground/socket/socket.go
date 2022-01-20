@@ -12,7 +12,7 @@
 // The wire format is JSON and is described by the Message type.
 //
 // This will not run on App Engine as WebSockets are not supported there.
-package socket // import "golang.org/x/tools/playground/socket"
+package socket
 
 import (
 	"bytes"
@@ -20,7 +20,6 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
-	exec "golang.org/x/sys/execabs"
 	"io"
 	"io/ioutil"
 	"log"
@@ -33,6 +32,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	exec "golang.org/x/sys/execabs"
 
 	"golang.org/x/net/websocket"
 	"golang.org/x/tools/txtar"
@@ -183,10 +184,13 @@ func startProcess(id, body string, dest chan<- *Message, opt *Options) *process 
 	}()
 	var err error
 	if path, args := shebang(body); path != "" {
-		if RunScripts {
-			err = p.startProcess(path, args, body)
-		} else {
-			err = errors.New("script execution is not allowed")
+		path, err = exec.LookPath(path)
+		if err == nil {
+			if RunScripts {
+				err = p.startProcess(path, args, body)
+			} else {
+				err = errors.New("script execution is not allowed")
+			}
 		}
 	} else {
 		err = p.start(body, opt)
@@ -331,6 +335,39 @@ func shebang(body string) (path string, args []string) {
 	return fs[0], fs
 }
 
+type playcmd struct {
+	cmd      string
+	args     []string
+	filename string
+	body     string
+}
+
+//!play go run main.go
+func play_shebang(body string) *playcmd {
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, "//!play ") {
+		return nil
+	}
+	var head string
+	if i := strings.Index(body, "\n"); i >= 0 {
+		head = body[:i]
+		body = body[i+1:]
+	}
+	fs := strings.Fields(head[8:])
+	if len(fs) > 1 {
+		v := fs[len(fs)-1]
+		if filepath.Ext(v) != "" {
+			p := &playcmd{}
+			p.cmd = fs[0]
+			p.args = fs
+			p.body = body
+			p.filename = v
+			return p
+		}
+	}
+	return nil
+}
+
 // startProcess starts a given program given its path and passing the given body
 // to the command standard input.
 func (p *process) startProcess(path string, args []string, body string) error {
@@ -368,15 +405,27 @@ func (p *process) start(body string, opt *Options) error {
 	}
 	bin := filepath.Join(path, out)
 
+	play := play_shebang(body)
+	if play != nil {
+		body = play.body
+	}
+
 	// write body to x.go files
 	a := txtar.Parse([]byte(body))
 	if len(a.Comment) != 0 {
-		a.Files = append(a.Files, txtar.File{Name: "prog.go", Data: a.Comment})
+		f := txtar.File{Name: "prog.go", Data: a.Comment}
+		if play != nil {
+			f.Name = play.filename
+		}
+		a.Files = append(a.Files, f)
 		a.Comment = nil
 	}
 	hasModfile := false
 	for _, f := range a.Files {
-		err = ioutil.WriteFile(filepath.Join(path, f.Name), f.Data, 0666)
+		filename := filepath.Join(path, f.Name)
+		dir, _ := filepath.Split(filename)
+		os.MkdirAll(dir, 0777)
+		err = ioutil.WriteFile(filename, f.Data, 0666)
 		if err != nil {
 			return err
 		}
@@ -384,7 +433,28 @@ func (p *process) start(body string, opt *Options) error {
 			hasModfile = true
 		}
 	}
-
+	if hasModfile {
+		cmd := p.cmd(path, "go", "mod", "tidy")
+		cmd.Run()
+	}
+	if play != nil {
+		p.out <- &Message{
+			Kind: "stderr",
+			Body: strings.Join(play.args, " ") + "\n",
+		}
+		cmd := p.cmd(path, play.args...)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		p.run = cmd
+		return nil
+	}
+	if !hasModfile {
+		cmd := p.cmd(path, "go", "mod", "init", "prog")
+		cmd.Run()
+		cmd = p.cmd(path, "go", "mod", "tidy")
+		cmd.Run()
+	}
 	// build x.go, creating x
 	args := []string{"go", "build", "-tags", "OMIT"}
 	if opt != nil && opt.Race {
@@ -396,9 +466,13 @@ func (p *process) start(body string, opt *Options) error {
 	}
 	args = append(args, "-o", bin)
 	cmd := p.cmd(path, args...)
-	if !hasModfile {
-		cmd.Env = append(cmd.Env, "GO111MODULE=off")
+	p.out <- &Message{
+		Kind: "stderr",
+		Body: "go build -o prog\n",
 	}
+	// if !hasModfile {
+	// 	cmd.Env = append(cmd.Env, "GO111MODULE=off")
+	// }
 	cmd.Stdout = cmd.Stderr // send compiler output to stderr
 	if err := cmd.Run(); err != nil {
 		return err
@@ -415,6 +489,10 @@ func (p *process) start(body string, opt *Options) error {
 	}
 	if opt != nil && opt.Race {
 		cmd.Env = append(cmd.Env, "GOMAXPROCS=2")
+	}
+	p.out <- &Message{
+		Kind: "stderr",
+		Body: "./prog\n",
 	}
 	if err := cmd.Start(); err != nil {
 		// If we failed to exec, that might be because they built
