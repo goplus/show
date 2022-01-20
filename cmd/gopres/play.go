@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/goplus/present"
+	"github.com/goplus/present/playground/socket"
 	"golang.org/x/tools/godoc/static"
-	"golang.org/x/tools/playground/socket"
 
 	// This will register a handler at /compile that will proxy to the
 	// respective endpoints at play.golang.org. This allows the frontend to call
